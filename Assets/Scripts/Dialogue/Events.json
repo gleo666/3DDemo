@@ -1,0 +1,158 @@
+{
+  "Events": [
+    {
+      "EventName": "Open_Door",
+      "PromptText": "开门",
+      "EventText": [
+        "门打开了……"
+      ],
+      "End": { "Type": "Destroy" }
+    },
+    {
+      "EventName": "Clean_Up_Trash1",
+      "PromptText": "清理",
+      "EventText": [
+        "一堆杂物堵住了门……"
+      ],
+      "End": {
+        "Type": "Branch",
+        "Condition": "Player.GetKey == true",
+        "TrueEvent": "HasGetKey",
+        "FalseEvent": "NeedKey"
+      }
+    },
+    {
+      "EventName": "HasGetKey",
+      "PromptText": "清理",
+      "EventText": [
+        "成功清理了杂物……"
+      ],
+      "End": {"Type": "Destroy"}
+    },
+    {
+      "EventName": "NeedKey",
+      "PromptText": "清理",
+      "EventText": [
+        "需要工具才能进行清理……"
+      ],
+      "End": {"Type": "None"}
+    },
+    {
+      "EventName": "Pick_Up",
+      "PromptText": "拿起",
+      "EventText": [
+        "获得了撬棍，可用于清理杂物……"
+      ],
+      "End": {"Type": "Destroy","Set": ["Player.GetKey = true"]}
+    },
+    {
+      "EventName": "FirstFight",
+      "PromptText": "战斗",
+      "EventText": [
+        "第一次战斗，对方异常愤怒，战斗中受到敌人攻击后，部分棋子将变为愤怒棋子，仅能被相同棋子消除……"
+      ],
+      "End": {"Type": "Destroy"}
+    },
+    {
+      "EventName": "SecondFight",
+      "PromptText": "战斗",
+      "EventText": [
+        "第二次战斗，对方非常恐惧幽室，战斗中受到敌人攻击后，部分棋子将变为封闭棋子，需在棋子附近完成多次消除后才可消除该棋子……"
+      ],
+      "End": {"Type": "Destroy"}
+    },
+    {
+      "EventName": "FinalFight",
+      "PromptText": "战斗",
+      "EventText": [
+        "最终的战斗，敌人会分别进行暴怒攻击和幽闭攻击",
+        "第三次攻击将会清除暴怒棋子和幽闭棋子，根据清除棋子数量对目标造成大量伤害……"
+      ],
+      "End": {"Type": "Destroy"}
+    },
+    {
+      "EventName": "FirstTrap",
+      "PromptText": "战斗",
+      "EventText": [
+        "看了一眼眼前的障碍，发现后方突然有一排电锯追了过来",
+        "快跑啊，沿途还有一堆东西要破除",
+        "成功破除了障碍"
+      ],
+      "End": {"Type": "Destroy","Set": ["Saw.IsMoving = true", "Saw.Visible = true"]}
+    },
+    {
+      "EventName": "SecondTrap",
+      "PromptText": "战斗",
+      "EventText": [
+        "成功破除了障碍"
+      ],
+      "End": {"Type": "Destroy"}
+    },
+    {
+      "EventName": "FinalTrap",
+      "PromptText": "战斗",
+      "EventText": [
+        "成功破除了障碍",
+        "过场动画中，电锯消失了，只能继续向前了"
+      ],
+      "End": {"Type": "Destroy","Set": ["Saw.IsMoving = false", "Saw.Visible = false"]}
+    },
+    {
+      "EventName": "Boss_Door",
+      "PromptText": "开门",
+      "EventText": [
+        "实验室的大门"
+      ],
+      "End": {
+        "Type": "Branch",
+        "Condition": "BossDoor.IsOpen == true",
+        "TrueEvent": "OpenBossDoor",
+        "FalseEvent": "NeedOpenDoor"
+      }
+    },
+    {
+      "EventName": "OpenBossDoor",
+      "PromptText": "战斗",
+      "EventText": [
+        "实验室大门打开了"
+      ],
+      "End": {"Type": "Destroy"}
+    },
+    {
+      "EventName": "NeedOpenDoor",
+      "PromptText": "战斗",
+      "EventText": [
+        "大门尚未通电，此时无法打开"
+      ],
+      "End": {"Type": "None"}
+    },
+    {
+      "EventName": "Electricity",
+      "PromptText": "操作",
+      "EventText": [
+        "操作控制台成功为实验室大门授权，可打开实验室大门"
+      ],
+      "End": {
+        "Type": "Destroy",
+        "Set": ["BossDoor.IsOpen = true"]
+      }
+    },
+    {
+      "EventName": "Record1",
+      "PromptText": "查看",
+      "EventText": [
+        "实验记录1，该个体异常暴怒，且会袭击实验人员……"
+      ],
+      "End": {"Type": "None"}
+    },
+    {
+      "EventName": "Record2",
+      "PromptText": "查看",
+      "EventText": [
+        "实验记录2，该个体总是躲藏在室内，不愿意任何人靠近……",
+        "近期母个体的精神状态异常不稳定，经常出现自残行为，我方已采取必要控制措施"
+      ],
+      "End": {"Type": "None"}
+    }
+  ]
+}

@@ -1,0 +1,479 @@
+====================================================================
+对话事件系统 使用说明
+版本：v2
+适用：Unity 2021.3.6f1 + TextMeshPro 3.0.6
+====================================================================
+
+本文档描述 v2 的数据格式和运行时行为。
+如果代码行为与本文不一致，以本文为准，并反馈修改代码。
+
+
+版本变化
+--------------------------------------------------------------------
+v1：一段文本 -> 念完 -> 销毁对象
+v2：一段文本 -> 念完 -> 按 End 做结束决策
+    - 支持关闭 / 销毁 / 跳转 / 条件分支
+    - 支持事件结束时给变量赋值
+    - 支持 bool 和数字比较，支持 && 和 ||
+
+
+一、功能概览
+--------------------------------------------------------------------
+1. 靠近 + 镜头对准 + 角色面向可互动对象时，出现“对话”按钮。
+2. 按 E 开始对话，对话框显示事件文本；再按 E 推进。
+3. 事件结束后可以：
+   - 关闭对话框，对象保留（默认）
+   - 关闭对话框，销毁对象
+   - 不关对话框，直接播放下一个事件
+   - 读取变量，按条件跳到 true / false 两个事件之一
+4. 事件结束可以给任意对象身上的变量赋值。
+5. 条件支持 bool、数字比较，支持 &&（并且）和 ||（或者）。
+
+
+二、文件和场景准备
+--------------------------------------------------------------------
+2.1 数据文件
+  Assets/Scripts/Dialogue/Events.json
+
+  要求：
+    - UTF-8 无 BOM
+    - 不能写 // 注释
+    - 不能有尾逗号
+    - 必须使用英文双引号，中文引号会解析失败
+
+2.2 代码文件
+  Assets/Scripts/Dialogue/
+    EventData.cs                数据类
+    DialogueDatabase.cs         加载 + 按名字索引
+    DialogueManager.cs          对话状态机
+    DialogueUI.cs               按钮 + 对话框
+    Interactable.cs             可互动标记
+    InteractionDetector.cs      瞄准检测
+    PlayerDialogueController.cs 输入与提示
+    EventVariableHolder.cs      v2 新增，变量组件
+    EventVariableRegistry.cs    v2 新增，按 OwnerId 查对象
+    EventExpression.cs          v2 新增，条件/赋值解析
+
+2.3 场景对象
+  DialogueManager
+    挂 DialogueManager
+    Ui          -> DialogueCanvas
+    Events File -> Events.json
+
+  DialogueCanvas
+    挂 DialogueUI
+    子物体：对话按钮、对话框、正文、提示
+
+  PlayerArmature
+    挂 InteractionDetector
+      Aim Camera        MainCamera
+      Max Distance      3
+      Max Facing Angle  90
+      Hit Mask          排除 Character / Ignore Raycast / UI
+    挂 PlayerDialogueController
+      Ui -> DialogueCanvas
+    挂 EventVariableHolder
+      Owner Id -> Player
+      变量按需添加
+
+  可对话对象
+    Collider（不要勾 Is Trigger）
+    Interactable，Event Name 填事件名
+
+  需要被条件读取或被赋值的对象
+    再加 EventVariableHolder，Owner Id 唯一
+
+
+三、Events.json 基本结构
+--------------------------------------------------------------------
+{
+  "Events": [
+    {
+      "EventName": "Talk_Engineer_01",
+      "PromptText": "对话",
+      "EventText": [
+        "第一句",
+        "第二句"
+      ],
+      "End": { ... }
+    }
+  ]
+}
+
+字段说明：
+  EventName    必填。全局唯一，和 Interactable 的 Event Name 一致。
+  PromptText   可选。按钮文字，省略时显示“对话”。
+  EventText    必填。至少一句；[0] 是第一句，[1] 是第二句。
+  End          可选。不写 = 关闭对话框，对象保留。
+
+注意：
+  - 数组下标从 0 开始
+  - 事件名区分大小写
+  - 事件名不要用中文标点
+
+
+四、End 的四种类型
+--------------------------------------------------------------------
+4.1 Type = "None"
+  行为：关闭对话框，对象保留。
+  例子：
+    "End": { "Type": "None" }
+
+  不写 End 与 None 相同。
+
+4.2 Type = "Destroy"
+  行为：关闭对话框，销毁当前对话对象。
+  例子：
+    "End": { "Type": "Destroy" }
+
+  销毁只发生在运行时。停止 Play 或重启游戏后对象复原，
+  不会修改场景文件和预制体。
+
+4.3 Type = "Jump"
+  行为：不关对话框，直接载入 NextEvent 的第一句。
+  例子：
+    "End": {
+      "Type": "Jump",
+      "NextEvent": "Alarm_Narration"
+    }
+
+  跳转沿用当前对话对象。后续事件的 Self 仍指向它。
+
+4.4 Type = "Branch"
+  行为：不关对话框，先算 Condition，再跳到 TrueEvent 或 FalseEvent。
+  例子：
+    "End": {
+      "Type": "Branch",
+      "Condition": "Player.HasKeyCard == true",
+      "TrueEvent": "Door_Open",
+      "FalseEvent": "Door_Locked"
+    }
+
+4.5 公共可选字段
+  "Set": [ ... ]        事件结束时的赋值，见第六节
+  "DestroySelf": true   仅 Jump / Branch 有意义
+                        先销毁当前对话对象，再继续
+
+  注意：
+    - Branch 先求值 Condition，再执行 DestroySelf。
+      所以 Condition 里的 Self 在销毁前仍然有效。
+    - Jump 直接执行 DestroySelf，再载入下一事件。
+    - DestroySelf 默认 false。
+
+4.6 提示文字
+  一个事件的最后一句：
+    End 是 None / Destroy / 不写   -> 显示【按 E 结束】
+    End 是 Jump / Branch          -> 显示【按 E 继续】
+
+  跳转后的新事件，第一句显示【按 E 继续】；
+  直到链尾的终端事件最后一句才显示【按 E 结束】。
+
+
+五、条件表达式 Condition
+--------------------------------------------------------------------
+5.1 基本形式
+  "Condition": "对象.变量 运算符 值"
+
+  例子：
+    "Player.HasKeyCard == true"
+    "NPC_Engineer.Trust >= 10"
+    "Self.IsAngry == false"
+    "DoorOpen == 1"
+    "Player.HasKeyCard"
+
+  说明：
+    - 对象可以省略，省略 = Self（当前对话对象）
+    - 只写变量、不写运算符 = 判断该 bool 是否为 true
+    - 表达式里的空格会被忽略
+
+5.2 对象
+  Self      当前正在对话的对象（Interactable 所在对象）
+  Player    玩家对象，要求玩家身上有 Holder，Owner Id = Player
+  其他 ID   任意对象 Holder 的 Owner Id
+
+5.3 运算符
+  ==   等于
+  !=   不等于
+  >    大于
+  >=   大于等于
+  <    小于
+  <=   小于等于
+
+  布尔变量：只能用 == 和 !=
+    值写 true / false / 1 / 0
+    例：Player.DoorOpen == 1 等价于 == true
+  数字变量：六个运算符都能用，值写数字
+    例：NPC_Engineer.Trust >= 10
+
+5.4 && 和 ||
+  &&  并且
+  ||  或者
+  && 的优先级高于 ||
+  同级从左到右
+  不支持括号
+
+  例子：
+    "Player.HasKeyCard == true && Player.Coins >= 10"
+    两个都 true 才 true。
+
+    "NPC_Engineer.Trust >= 10 || Player.HasKeyCard == 1"
+    任意一个 true 就 true。
+
+    混合：
+    "Player.Coins >= 10 && Player.HasKeyCard == true || NPC_Engineer.Trust >= 5"
+    等价于 (Coins >= 10 && HasKeyCard) || Trust >= 5
+
+  需要括号分组时，把条件拆成两个事件，用 Jump 串联。
+
+5.5 求值失败
+  以下情况会打 Warning，并把“当前这一个比较”当作 false，
+  继续计算 && / ||：
+    - 表达式语法错误
+    - 对象 ID 找不到
+    - 变量名找不到
+    - 变量类型与运算符不匹配
+    - 数字格式错误
+
+  整体结果仍为 false 时，走 FalseEvent。
+  配置错误不会卡死对话，但会静默走 false 分支。
+  每次进 Play 先看 Console 有没有 [Dialogue] 警告。
+
+5.6 语法限制
+  - 变量名和对象 ID 不要包含空格、点、&&、||、=、<、>、!
+  - 变量名不要包含点；对象 ID 建议也不要含点
+  - 不支持字符串比较
+  - 不支持括号
+  - 不支持函数调用
+
+
+六、Set（事件结束时赋值）
+--------------------------------------------------------------------
+6.1 写法
+  "Set": [
+    "Player.DoorOpen = true",
+    "Player.Coins = 10",
+    "Self.Trust = 5"
+  ]
+
+  规则：
+    - 赋值用单个 =
+    - 比较用 ==，不要混
+    - 只能赋字面量：true / false / 数字
+    - 布尔变量可以赋 true / false / 1 / 0
+    - 数字变量只能赋数字
+    - 变量必须事先在 Holder 的 Inspector 里声明
+    - Set 不会自动创建变量
+    - 数组按顺序执行
+    - 某一条失败只打警告并跳过，不影响其他条
+
+6.2 执行顺序
+  1. 取 End；没写 End 直接关闭
+  2. 按数组顺序执行 Set
+  3. 按 Type 处理
+  4. 如果是 Branch，再求值 Condition
+  5. 如果 DestroySelf，销毁当前对象
+  6. 跳转或关闭
+
+  因此 Condition 看到的是 Set 之后的“新值”。
+  如果要判断“对话前的旧值”，不要在这个事件里 Set 同一个变量。
+
+
+七、变量组件 EventVariableHolder
+--------------------------------------------------------------------
+7.1 挂载与配置
+  Add Component -> EventVariableHolder
+
+  Owner Id：
+    唯一标识，例如 Player、NPC_Engineer、Door_01。
+    留空则使用 GameObject 名字，建议显式填写。
+
+  Variables：
+    Name    变量名，例如 HasKeyCard
+    Type    Bool 或 Number
+    Value   勾选框或数字
+
+  例子：
+    Owner Id: Player
+    Variables:
+      DoorOpen    Bool    [ ]
+      Coins       Number  [0]
+
+7.2 规则
+  - 变量必须先声明；条件和 Set 只能引用已声明的变量
+  - Bool 存 true/false；Number 存 float
+  - Self 直接取当前对话对象身上的 Holder，不走注册表
+  - 其他对象按 Owner Id 从注册表查找
+  - 同一个 Owner Id 出现两次会警告，只有第一个生效
+  - 对象未激活时不会注册，条件读不到它的变量
+  - 玩家对象也要挂 Holder，Owner Id 填 Player
+
+7.3 给其他脚本用
+  EventVariableHolder 提供：
+    TryGetBool(name, out bool)
+    TryGetNumber(name, out float)
+    SetBool(name, bool)
+    SetNumber(name, float)
+
+  例如拾取物品后：
+    playerVars.SetBool("HasKeyCard", true);
+
+
+八、完整示例
+--------------------------------------------------------------------
+8.1 门：有卡就开，没卡就提示
+  玩家 Holder：HasKeyCard (Bool)
+
+  {
+    "Events": [
+      {
+        "EventName": "Door_Check",
+        "PromptText": "检查门",
+        "EventText": [
+          "门锁着。",
+          "你摸了摸口袋。"
+        ],
+        "End": {
+          "Type": "Branch",
+          "Condition": "Player.HasKeyCard == true",
+          "TrueEvent": "Door_Open",
+          "FalseEvent": "Door_Locked"
+        }
+      },
+      {
+        "EventName": "Door_Open",
+        "EventText": [
+          "刷卡成功，门开了。"
+        ],
+        "End": {
+          "Type": "None",
+          "Set": [
+            "Player.DoorOpen = true"
+          ]
+        }
+      },
+      {
+        "EventName": "Door_Locked",
+        "EventText": [
+          "没有门禁卡。"
+        ],
+        "End": { "Type": "None" }
+      }
+    ]
+  }
+
+  流程：
+    检查门 -> 两句 -> 按 E
+    -> 判断 Player.HasKeyCard
+    -> true  : 播“刷卡成功，门开了。”，把 Player.DoorOpen 设为 true
+    -> false : 播“没有门禁卡。”
+    -> 最后按 E 关闭窗口，门对象保留
+
+8.2 工程师：给完通行证立刻消失，再播旁白
+  {
+    "EventName": "Engineer_GivePass",
+    "EventText": [
+      "拿着，别弄丢了。"
+    ],
+    "End": {
+      "Type": "Jump",
+      "DestroySelf": true,
+      "Set": [
+        "Player.HasKeyCard = true"
+      ],
+      "NextEvent": "Alarm_Narration"
+    }
+  }
+
+  {
+    "EventName": "Alarm_Narration",
+    "EventText": [
+      "你听见远处传来警报声。"
+    ],
+    "End": { "Type": "None" }
+  }
+
+  流程：
+    最后一句按 E
+    -> 执行 Set：玩家 HasKeyCard = true
+    -> DestroySelf：工程师消失
+    -> 不关窗口，显示“你听见远处传来警报声。”
+    -> 再按 E 关闭
+
+8.3 复合条件
+  "Condition": "Player.Coins >= 10 && Player.HasKeyCard == true || NPC_Engineer.Trust >= 5"
+
+  等价于：
+    (Player.Coins >= 10 && Player.HasKeyCard == true)
+    || (NPC_Engineer.Trust >= 5)
+
+
+九、常见错误与排查
+--------------------------------------------------------------------
+现象：对话结束后对象不消失
+  原因：没写 End，或写了 None。
+  处理：要消失就写 "End": { "Type": "Destroy" }。
+
+现象：按 E 后窗口直接关了，没有跳到下一事件
+  原因：目标事件名为空、拼错、目标事件不存在、目标事件没有 EventText。
+  处理：看 Console 的 [Dialogue] 报错。
+
+现象：分支永远走 False
+  原因：变量不存在、Owner Id 错、类型不匹配、表达式拼错。
+  处理：看 Console 警告；检查 Holder 和表达式。
+
+现象：Set 没生效
+  原因：变量没声明、类型不对、Owner Id 找不到。
+  处理：先在 Holder 里声明变量并检查拼写。
+
+现象：A 跳到 B 又跳回 A，停不下来
+  原因：事件形成环。
+  处理：运行时有 32 次保护，会报错并关闭；检查事件图。
+
+现象：中文显示方块
+  原因：TMP 字体资产没设置或没生成中文。
+  处理：给 TMP 换中文字体资产。
+
+现象：按钮不出现
+  原因：距离、朝向、Hit Mask、Collider、Event Name。
+  处理：对照第二节检查。
+
+
+十、迁移与限制
+--------------------------------------------------------------------
+10.1 从 v1 迁移
+  v1 的行为是“事件结束无条件销毁对象”。
+  v2 的行为是“没写 End 就关闭窗口、保留对象”。
+
+  旧事件如果要保持“说完消失”，补：
+    "End": { "Type": "Destroy" }
+
+  旧事件如果本来就该保留，不用改。
+
+10.2 限制
+  - 跳转沿用同一个对话对象，不支持跳到另一个 NPC
+  - 条件只支持 bool 和数字，不支持字符串
+  - Set 只能赋字面量，不支持加减乘除、不支持变量对变量
+  - 条件不支持括号，需要分组就拆事件
+  - 变量不存档，退出游戏后回到 Inspector 的初始值
+  - 单次会话最多 32 次跳转
+  - 目标事件不能没有 EventText
+
+
+十一、快速验收清单
+--------------------------------------------------------------------
+[ ] 不写 End：关窗口，对象还在
+[ ] Destroy：对象消失，停止 Play 复原
+[ ] Jump：不关窗口，直接显示下一事件第一句
+[ ] Branch + bool：true / false 分支正确
+[ ] Branch + 数字 >=：边界值正确
+[ ] && / ||：优先级正确
+[ ] Set：变量确实变了
+[ ] Set 后 Branch：条件看到新值
+[ ] DestroySelf + Jump：对象先消失，文本继续
+[ ] 最后一句提示：Jump 显示“继续”，None/Destroy 显示“结束”
+[ ] 表达式写错：警告 + 走 false，不卡死
+
+
+====================================================================
+文档结束
+====================================================================
